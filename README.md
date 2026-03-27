@@ -15,6 +15,8 @@ Built with:
 * 📊 **Custom scoring engine** (triage focus)
 * 🤖 **AI-style analysis layer** (analyst assistance)
 
+  <img width="1538" height="826" alt="{F81C0C66-5CE3-49E8-B133-23E1ACA73827}" src="https://github.com/user-attachments/assets/58ca4bc7-3d8c-4785-86cc-402cc14e13ce" />
+
 ---
 
 ## 🚀 Features
@@ -169,11 +171,15 @@ python silenteye.py
 * Select a row
 * Press **F6**
 
+  <img width="1617" height="808" alt="{C8C88BFF-ECE2-447C-8D3E-B705DFA23B47}" src="https://github.com/user-attachments/assets/53adc0a2-46c6-428e-8de4-e07fae6bd29b" />
+
 ---
 
 ### Timeline
 
 * Press **Ctrl+T**
+
+  <img width="1406" height="825" alt="{E4ACF698-05C1-418B-9E7F-D21906F85E7B}" src="https://github.com/user-attachments/assets/ee5075c0-96cf-40fb-a53e-6aff516c0e55" />
 
 ---
 
@@ -181,6 +187,8 @@ python silenteye.py
 
 * **Ctrl+E** → Export all
 * **Ctrl+Shift+E** → Export high only
+
+  <img width="815" height="353" alt="{D7D29FAD-4FC2-4E2B-8252-233F9BEB3E1F}" src="https://github.com/user-attachments/assets/7c4ca082-b319-43f7-a13f-16ecdd514798" />
 
 ---
 
@@ -289,10 +297,9 @@ It focuses on speed, clarity, and practical DFIR workflows.
 
 **SilentEye = Fast DFIR, Real Decisions**
 
-<img width="1538" height="826" alt="{F81C0C66-5CE3-49E8-B133-23E1ACA73827}" src="https://github.com/user-attachments/assets/58ca4bc7-3d8c-4785-86cc-402cc14e13ce" />
-<img width="1617" height="808" alt="{C8C88BFF-ECE2-447C-8D3E-B705DFA23B47}" src="https://github.com/user-attachments/assets/53adc0a2-46c6-428e-8de4-e07fae6bd29b" />
-<img width="815" height="353" alt="{D7D29FAD-4FC2-4E2B-8252-233F9BEB3E1F}" src="https://github.com/user-attachments/assets/7c4ca082-b319-43f7-a13f-16ecdd514798" />
-<img width="1406" height="825" alt="{E4ACF698-05C1-418B-9E7F-D21906F85E7B}" src="https://github.com/user-attachments/assets/ee5075c0-96cf-40fb-a53e-6aff516c0e55" />
+
+
+
 
 
 
