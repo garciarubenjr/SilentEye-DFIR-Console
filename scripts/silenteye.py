@@ -13,6 +13,11 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, ListItem, ListView, Static, TextArea
 
 
+APP_ROOT = Path(__file__).resolve().parent
+EXPORT_DIR = APP_ROOT / "exports"
+OSQUERY_TIMEOUT_SECONDS = 45
+
+
 RAW_HUNT_QUERIES: Dict[str, str] = {
     "Startup Items": r"""
 SELECT
@@ -465,9 +470,24 @@ UNSUPPORTED_TABLE_HINTS = {
 }
 
 SAFE_PREFIXES = (
-    r"c:\windows\\",
-    r"c:\program files\\",
-    r"c:\program files (x86)\\",
+    "c:\\windows\\",
+    "c:\\program files\\",
+    "c:\\program files (x86)\\",
+)
+
+SUSPICIOUS_PATH_MARKERS = (
+    "\\users\\",
+    "\\appdata\\",
+    "\\temp\\",
+    "\\public\\",
+)
+
+SCRIPT_EXTENSIONS = (
+    ".ps1",
+    ".vbs",
+    ".js",
+    ".bat",
+    ".cmd",
 )
 
 TIMESTAMP_FIELDS = {
@@ -488,6 +508,30 @@ def split_sql_statements(sql: str) -> List[str]:
 def sort_columns(keys: List[str]) -> List[str]:
     priority_rank = {name: i for i, name in enumerate(COLUMN_PRIORITY)}
     return sorted(keys, key=lambda key: (priority_rank.get(key, 9999), key.lower()))
+
+
+def find_osquery() -> Optional[str]:
+    detected = shutil.which("osqueryi") or shutil.which("osqueryi.exe")
+    if detected:
+        return detected
+
+    if sys.platform.startswith("win"):
+        candidates = [
+            Path(r"C:\Program Files\osquery\osqueryi.exe"),
+            Path(r"C:\ProgramData\chocolatey\bin\osqueryi.exe"),
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+
+    return None
+
+
+def normalize_windows_path(path: str) -> str:
+    value = str(path or "").strip().replace("/", "\\")
+    if value.startswith('"'):
+        value = value[1:]
+    return value.lower()
 
 
 def copy_text_to_clipboard(text: str) -> Optional[str]:
@@ -599,12 +643,17 @@ def score_timeline(row: dict) -> tuple[int, List[str]]:
 
 
 def path_is_unusual(path: str) -> bool:
-    p = lower_text(path)
+    p = normalize_windows_path(path)
     if not p:
         return False
-    bad_markers = [r"\users\\", r"\appdata\\", r"\temp\\", r"\programdata\\", r"\public\\", ".ps1", ".vbs", ".js", ".bat", ".cmd"]
-    if any(marker in p for marker in bad_markers):
+
+    if any(marker in p for marker in SUSPICIOUS_PATH_MARKERS):
         return True
+
+    executable_path = p.split(" --", 1)[0].split(" -", 1)[0].strip().rstrip('"')
+    if executable_path.endswith(SCRIPT_EXTENSIONS):
+        return True
+
     return not p.startswith(SAFE_PREFIXES)
 
 
@@ -623,7 +672,7 @@ def score_startup_item(row: dict) -> tuple[int, List[str]]:
     if path_is_unusual(path):
         score += 45
         reasons.append("startup path outside standard trusted locations")
-    if any(x in lower_text(path) for x in [r"\appdata\\", r"\temp\\", r"\users\\public", ".vbs", ".js", ".bat", ".cmd", ".ps1"]):
+    if any(x in lower_text(path) for x in ["\\appdata\\", "\\temp\\", "\\users\\public", ".vbs", ".js", ".bat", ".cmd", ".ps1"]):
         score += 25
         reasons.append("startup item uses user-writable or script-heavy location")
     return min(score, 100), reasons
@@ -656,7 +705,7 @@ def score_service(row: dict) -> tuple[int, List[str]]:
     if path_is_unusual(path):
         score += 40
         reasons.append("service binary path is unusual")
-    if any(x in lower_text(path) for x in [r"\temp\\", r"\appdata\\", ".ps1", ".vbs", ".js"]):
+    if any(x in lower_text(path) for x in ["\\temp\\", "\\appdata\\", ".ps1", ".vbs", ".js"]):
         score += 25
         reasons.append("service path points to script or user-writable location")
     if lower_text(row.get("status")) == "running":
@@ -855,32 +904,32 @@ class RowDetailModal(ModalScreen[None]):
 
 
 
-class AISummaryModal(ModalScreen[None]):
+class AnalystAssistModal(ModalScreen[None]):
     CSS = """
-    AISummaryModal {
+    AnalystAssistModal {
         align: center middle;
         background: rgba(0, 0, 0, 0.65);
     }
-    #ai-shell {
+    #assist-shell {
         width: 85%;
         height: 85%;
         border: round #10b981;
         background: #0b0f14;
         padding: 1 1;
     }
-    #ai-title {
+    #assist-title {
         height: 1;
         color: #d1fae5;
         text-style: bold;
         margin-bottom: 1;
     }
-    #ai-body {
+    #assist-body {
         height: 1fr;
         border: round #223247;
         background: #111318;
         color: #e5e7eb;
     }
-    #ai-help {
+    #assist-help {
         height: 1;
         color: #94a3b8;
         margin-top: 1;
@@ -899,10 +948,10 @@ class AISummaryModal(ModalScreen[None]):
         self.body_text = body
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="ai-shell"):
-            yield Static(self.title_text, id="ai-title")
-            yield TextArea(self.body_text, id="ai-body", read_only=True)
-            yield Static("Esc/Q = close | C = copy analysis", id="ai-help")
+        with Vertical(id="assist-shell"):
+            yield Static(self.title_text, id="assist-title")
+            yield TextArea(self.body_text, id="assist-body", read_only=True)
+            yield Static("Esc/Q = close | C = copy analysis", id="assist-help")
 
     def action_dismiss_modal(self) -> None:
         self.dismiss()
@@ -912,10 +961,10 @@ class AISummaryModal(ModalScreen[None]):
         if error:
             self.notify(error, severity="error")
         else:
-            self.notify("AI analysis copied to clipboard.", severity="information")
+            self.notify("Analyst assistance copied to clipboard.", severity="information")
 
 
-def build_ai_row_analysis(row: dict, hunt_label: Optional[str], visible_columns: List[str]) -> str:
+def build_analyst_assistance(row: dict, hunt_label: Optional[str], visible_columns: List[str]) -> str:
     severity = str(row.get("severity", "Unknown"))
     score = str(row.get("score", ""))
     action = str(row.get("recommended_action", "Investigate"))
@@ -989,12 +1038,12 @@ def build_ai_row_analysis(row: dict, hunt_label: Optional[str], visible_columns:
             "Document why it was retained or cleared."
         ]
 
-    return f"""AI ANALYSIS
+    return f"""ANALYST ASSISTANCE
 Hunt: {hunt}
 Artifact: {artifact}
 Primary Path: {primary_path}
-Severity: {severity}
-Score: {score}
+Triage Priority: {severity}
+Triage Score: {score}
 Recommended Action: {action}
 
 Assessment
@@ -1016,7 +1065,7 @@ Evidence Snapshot
 {evidence_text}
 
 Suggested Write-up
-This {hunt.lower()} finding involving '{artifact}' was rated {severity.lower()} with a score of {score}. The strongest indicators were: {reasons}. Recommended action: {action}.
+This {hunt.lower()} finding involving '{artifact}' was assigned {severity.lower()} triage priority with a score of {score}. The strongest indicators were: {reasons}. Recommended action: {action}.
 """
 
 class SilentEyeDFIR(App):
@@ -1071,7 +1120,7 @@ class SilentEyeDFIR(App):
         color: #ffffff;
         text-style: bold;
     }
-    #ai-button {
+    #assist-button {
         width: 16;
         min-width: 16;
         margin-left: 1;
@@ -1106,7 +1155,7 @@ class SilentEyeDFIR(App):
         ("ctrl+e", "export_current_results", "Export All"),
         ("ctrl+shift+e", "export_high_results", "Export High"),
         ("ctrl+t", "load_timeline_view", "Timeline View"),
-        ("f6", "ai_analyze_selected_row", "AI Analyze"),
+        ("f6", "analyst_assist_selected_row", "Analyst Assist"),
         ("c", "copy_selected_row", "Copy Row"),
         ("y", "copy_selected_cell", "Copy Cell"),
         ("i", "inspect_selected_row", "Inspect Row"),
@@ -1122,7 +1171,7 @@ class SilentEyeDFIR(App):
         self.last_executed_sql: str = ""
         self.last_executed_hunt_label: Optional[str] = None
         self.is_timeline_view: bool = False
-        self.export_dir = Path.cwd() / 'exports'
+        self.export_dir = EXPORT_DIR
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -1146,9 +1195,9 @@ class SilentEyeDFIR(App):
                     yield self.export_high_button
                     self.timeline_button = Button("Timeline", id="timeline-button")
                     yield self.timeline_button
-                    self.ai_button = Button("AI Analyze", id="ai-button")
-                    yield self.ai_button
-                    yield Static("Run: Ctrl+Enter/Ctrl+R/F5 | Export: Ctrl+E | High Only: Ctrl+Shift+E | Timeline: Ctrl+T | AI: F6", id="run-help")
+                    self.assist_button = Button("Analyst Assist", id="assist-button")
+                    yield self.assist_button
+                    yield Static("Run: Ctrl+Enter/Ctrl+R/F5 | Export: Ctrl+E | High Only: Ctrl+Shift+E | Timeline: Ctrl+T | Assist: F6", id="run-help")
                 with Vertical(id="table-box"):
                     self.results_table = DataTable(id="results-table")
                     self.results_table.cursor_type = "row"
@@ -1186,13 +1235,20 @@ class SilentEyeDFIR(App):
             self.action_export_high_results()
         elif event.button.id == "timeline-button":
             self.action_load_timeline_view()
-        elif event.button.id == "ai-button":
-            self.action_ai_analyze_selected_row()
+        elif event.button.id == "assist-button":
+            self.action_analyst_assist_selected_row()
 
     def action_load_timeline_view(self) -> None:
+        source_label = self.last_executed_hunt_label or self.current_hunt_label
+        source_sql = self.last_executed_sql or self.current_sql or self.query_input.text.strip()
+
+        timeline_sql = build_contextual_timeline_sql(source_label, source_sql)
+
         self.current_hunt_label = "Context Timeline"
-        self.query_input.text = RAW_HUNT_QUERIES["Context Timeline"]
-        self.run_query(self.query_input.text)
+        self.current_sql = timeline_sql
+        self.is_timeline_view = True
+        self.query_input.text = timeline_sql
+        self.run_query(timeline_sql)
 
     def action_run_current_query(self) -> None:
         current_sql = self.query_input.text.strip()
@@ -1207,9 +1263,9 @@ class SilentEyeDFIR(App):
             self.is_timeline_view = False
         self.run_query(current_sql)
 
-    def action_ai_analyze_selected_row(self) -> None:
+    def action_analyst_assist_selected_row(self) -> None:
         if not self.current_rows or not self.visible_columns:
-            self.status_box.update("No result row available for AI analysis.")
+            self.status_box.update("No result row available for analyst assistance.")
             return
         row_index = self._get_selected_row_index()
         if row_index is None:
@@ -1217,10 +1273,10 @@ class SilentEyeDFIR(App):
             return
         try:
             row = self.current_rows[row_index]
-            body = build_ai_row_analysis(row, self.current_hunt_label, self.visible_columns)
-            self.push_screen(AISummaryModal(f"AI Analysis #{row_index + 1}", body))
+            body = build_analyst_assistance(row, self.current_hunt_label, self.visible_columns)
+            self.push_screen(AnalystAssistModal(f"Analyst Assistance #{row_index + 1}", body))
         except Exception as exc:
-            self.status_box.update(f"AI analysis failed: {exc}")
+            self.status_box.update(f"Analyst assistance failed: {exc}")
 
     def action_export_current_results(self) -> None:
         self._export_rows(self.current_rows, suffix="all")
@@ -1311,9 +1367,9 @@ class SilentEyeDFIR(App):
     def run_query(self, sql: str) -> None:
         self.last_executed_sql = sql
         self.last_executed_hunt_label = self.current_hunt_label
-        osquery_path = shutil.which("osqueryi")
+        osquery_path = find_osquery()
         if not osquery_path:
-            self.status_box.update("osqueryi was not found in PATH.")
+            self.status_box.update("osqueryi was not found. Install osquery or add osqueryi.exe to PATH.")
             return
 
         statements = split_sql_statements(sql)
@@ -1331,7 +1387,13 @@ class SilentEyeDFIR(App):
                     capture_output=True,
                     text=True,
                     shell=False,
+                    timeout=OSQUERY_TIMEOUT_SECONDS,
                 )
+            except subprocess.TimeoutExpired:
+                errors.append(
+                    f"Statement {idx}: query exceeded {OSQUERY_TIMEOUT_SECONDS}-second timeout."
+                )
+                continue
             except Exception as exc:
                 errors.append(f"Statement {idx}: launch failed: {exc}")
                 continue
@@ -1431,7 +1493,7 @@ class SilentEyeDFIR(App):
             meds = sum(1 for row in rows if row.get("severity") == "Medium")
             self.status_box.update(
                 f"Loaded {len(rows)} row(s). High: {highs} | Medium: {meds}. "
-                "Use C to copy, I to inspect, F6 for AI analysis, Ctrl+E to export all, Ctrl+Shift+E for High-only, and Ctrl+T for timeline."
+                "Use C to copy, I to inspect, F6 for analyst assistance, Ctrl+E to export all, Ctrl+Shift+E for High-only, and Ctrl+T for timeline."
             )
 
     def _get_selected_row_index(self) -> Optional[int]:
